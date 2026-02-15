@@ -15,6 +15,17 @@ This enables a practical "QQ as chat frontend + local agent runtime" workflow.
 
 ---
 
+## Setup
+
+1. Install dependencies: `pip install -r requirements.txt`
+2. Create a local `.env` from the example values in this README (or from `.env.example` if present)
+3. Fill in QQ bot credentials and local Claude command
+4. Start service: `python -m src.bridge.main`
+
+Required runtime settings are validated during service startup.
+
+---
+
 ## Current Code Structure
 
 ```text
