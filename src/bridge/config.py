@@ -2,7 +2,11 @@ import os
 from dataclasses import dataclass
 from typing import List
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - fallback for minimal environments
+    def load_dotenv(*_args: object, **_kwargs: object) -> bool:
+        return False
 
 
 @dataclass(frozen=True)
@@ -25,10 +29,14 @@ class BridgeConfig:
         qq_callback_secret = (os.getenv("QQ_CALLBACK_SECRET") or "").strip()
         qq_api_base_url = (os.getenv("QQ_API_BASE_URL") or "https://api.sgroup.qq.com").strip()
 
-        claude_cmd_raw = (os.getenv("CLAUDE_CMD") or "claude").strip()
+        claude_cmd_raw = (os.getenv("CLAUDE_CMD") or os.getenv("CLAUDE_COMMAND") or "claude").strip()
         claude_cmd = claude_cmd_raw.split()
 
-        session_timeout_raw = (os.getenv("SESSION_TIMEOUT_SECONDS") or "1800").strip()
+        session_timeout_raw = (
+            os.getenv("SESSION_TIMEOUT_SECONDS")
+            or os.getenv("CLAUDE_SESSION_IDLE_TIMEOUT")
+            or "1800"
+        ).strip()
 
         errors: List[str] = []
         if not qq_app_id:
