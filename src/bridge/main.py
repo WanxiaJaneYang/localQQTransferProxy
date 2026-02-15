@@ -6,6 +6,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 
 from .claude_adapter import ClaudeAdapter
+from .config import BridgeConfig
 from .qq_adapter import QQAdapter
 
 
@@ -93,20 +94,16 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
 
 
 def build_service() -> BridgeService:
-    bot_account_id = os.getenv("QQ_BOT_APP_ID", "")
-    bot_token = os.getenv("QQ_BOT_TOKEN", "")
-    api_base_url = os.getenv("QQ_API_BASE_URL", "https://api.sgroup.qq.com")
-    claude_command = os.getenv("CLAUDE_COMMAND", "claude").split()
-    idle_timeout_seconds = int(os.getenv("CLAUDE_SESSION_IDLE_TIMEOUT", "900"))
+    config = BridgeConfig.from_env()
 
     qq_adapter = QQAdapter(
-        bot_account_id=bot_account_id,
-        bot_token=bot_token,
-        api_base_url=api_base_url,
+        bot_account_id=config.qq_app_id,
+        bot_token=config.qq_bot_token,
+        api_base_url=config.qq_api_base_url,
     )
     claude_adapter = ClaudeAdapter(
-        command=claude_command,
-        idle_timeout_seconds=idle_timeout_seconds,
+        command=config.claude_cmd,
+        idle_timeout_seconds=config.session_timeout_seconds,
     )
     return BridgeService(qq_adapter=qq_adapter, claude_adapter=claude_adapter)
 
@@ -116,7 +113,11 @@ def run() -> None:
     host = os.getenv("BRIDGE_HOST", "0.0.0.0")
     port = int(os.getenv("BRIDGE_PORT", "8080"))
 
-    service = build_service()
+    try:
+        service = build_service()
+    except ValueError as exc:
+        LOGGER.error(str(exc))
+        raise SystemExit(1) from exc
     BridgeRequestHandler.service = service
 
     server = ThreadingHTTPServer((host, port), BridgeRequestHandler)
