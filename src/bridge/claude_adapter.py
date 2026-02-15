@@ -133,14 +133,37 @@ class ClaudeAdapter:
                     if (now - session.last_used) > self._idle_timeout_seconds:
                         stale.append(session_key)
             for session_key in stale:
-                LOGGER.info("Cleaning up idle Claude session", extra={"session_key": session_key})
-                self._terminate_session(session_key)
+                self._terminate_session_if_idle(session_key)
+
+    def _terminate_session_if_idle(self, session_key: str) -> None:
+        with self._sessions_lock:
+            session = self._sessions.get(session_key)
+        if not session:
+            return
+
+        should_terminate = False
+        with session.lock:
+            with self._sessions_lock:
+                current = self._sessions.get(session_key)
+            if current is not session:
+                return
+            if (time.time() - session.last_used) <= self._idle_timeout_seconds:
+                return
+            LOGGER.info("Cleaning up idle Claude session", extra={"session_key": session_key})
+            with self._sessions_lock:
+                if self._sessions.get(session_key) is session:
+                    self._sessions.pop(session_key, None)
+                    should_terminate = True
+
+        if should_terminate:
+            self._terminate_process(session.process)
 
     def _terminate_session(self, session_key: str) -> None:
         with self._sessions_lock:
             session = self._sessions.pop(session_key, None)
         if session:
-            self._terminate_process(session.process)
+            with session.lock:
+                self._terminate_process(session.process)
 
     @staticmethod
     def _terminate_process(process: subprocess.Popen) -> None:
