@@ -38,21 +38,23 @@ class ClaudeAdapter:
         self._cleanup_thread.start()
 
     def ask(self, session_key: str, prompt: str, timeout_seconds: int = 30) -> str:
-        session = self._get_or_create_session(session_key)
-        with session.lock:
-            if session.process.poll() is not None:
-                LOGGER.info("Claude process exited, recreating", extra={"session_key": session_key})
-                session = self._replace_session(session_key)
+        while True:
+            session = self._get_or_create_session(session_key)
+            with session.lock:
+                if session.process.poll() is not None:
+                    LOGGER.info("Claude process exited, recreating", extra={"session_key": session_key})
+                    self._replace_session(session_key)
+                    continue
 
-            session.last_used = time.time()
-            assert session.process.stdin is not None
-            assert session.process.stdout is not None
+                session.last_used = time.time()
+                assert session.process.stdin is not None
+                assert session.process.stdout is not None
 
-            session.process.stdin.write(prompt + "\n")
-            session.process.stdin.flush()
-            output = self._read_response(session.process, timeout_seconds)
-            session.last_used = time.time()
-            return output.strip() or "(no response)"
+                session.process.stdin.write(prompt + "\n")
+                session.process.stdin.flush()
+                output = self._read_response(session.process, timeout_seconds)
+                session.last_used = time.time()
+                return output.strip() or "(no response)"
 
     def close(self) -> None:
         self._shutdown_event.set()
