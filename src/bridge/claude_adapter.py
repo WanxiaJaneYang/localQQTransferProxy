@@ -1,4 +1,5 @@
 import logging
+import os
 import select
 import subprocess
 import threading
@@ -95,29 +96,30 @@ class ClaudeAdapter:
     def _read_response(self, process: subprocess.Popen, timeout_seconds: int) -> str:
         assert process.stdout is not None
         chunks: List[str] = []
+        stdout_fd = process.stdout.fileno()
         deadline = time.time() + timeout_seconds
         quiet_window_seconds = 0.6
 
         while time.time() < deadline:
             remaining = max(0.05, deadline - time.time())
-            ready, _, _ = select.select([process.stdout], [], [], min(0.25, remaining))
+            ready, _, _ = select.select([stdout_fd], [], [], min(0.25, remaining))
             if not ready:
                 if chunks:
                     break
                 continue
-            line = process.stdout.readline()
-            if not line:
+            raw = os.read(stdout_fd, 4096)
+            if not raw:
                 break
-            chunks.append(line)
+            chunks.append(raw.decode("utf-8", errors="replace"))
             quiet_deadline = time.time() + quiet_window_seconds
             while time.time() < quiet_deadline:
-                ready, _, _ = select.select([process.stdout], [], [], 0.1)
+                ready, _, _ = select.select([stdout_fd], [], [], 0.1)
                 if not ready:
                     continue
-                extra_line = process.stdout.readline()
-                if not extra_line:
+                extra_raw = os.read(stdout_fd, 4096)
+                if not extra_raw:
                     break
-                chunks.append(extra_line)
+                chunks.append(extra_raw.decode("utf-8", errors="replace"))
         return "".join(chunks)
 
     def _cleanup_worker(self) -> None:
