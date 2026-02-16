@@ -1,9 +1,12 @@
 import json
+import hashlib
+import hmac
 import logging
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 
 LOGGER = logging.getLogger(__name__)
@@ -23,11 +26,60 @@ class QQMessageEvent:
 class QQAdapter:
     """Tencent QQ adapter for ingesting events and sending responses."""
 
-    def __init__(self, bot_account_id: str, bot_token: str, api_base_url: str, timeout_seconds: int = 10) -> None:
+    def __init__(
+        self,
+        bot_account_id: str,
+        bot_token: str,
+        api_base_url: str,
+        callback_secret: str = "",
+        timeout_seconds: int = 10,
+        max_retries: int = 2,
+        retry_backoff_seconds: float = 0.5,
+    ) -> None:
         self.bot_account_id = bot_account_id
         self.bot_token = bot_token
         self.api_base_url = api_base_url.rstrip("/")
+        self.callback_secret = callback_secret
         self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
+
+    def verify_callback_signature(self, raw_body: bytes, headers: Mapping[str, str]) -> bool:
+        """Verify callback signature if QQ_CALLBACK_SECRET is configured."""
+        if not self.callback_secret:
+            return True
+
+        signature = (
+            headers.get("X-Signature")
+            or headers.get("X-QQ-Signature")
+            or headers.get("X-Bot-Signature")
+            or ""
+        ).strip()
+        if not signature:
+            return False
+
+        normalized = signature
+        if signature.startswith("sha256="):
+            normalized = signature.split("=", 1)[1]
+
+        expected_body = hmac.new(
+            self.callback_secret.encode("utf-8"),
+            raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+        if hmac.compare_digest(normalized, expected_body):
+            return True
+
+        timestamp = (headers.get("X-Signature-Timestamp") or headers.get("X-QQ-Timestamp") or "").strip()
+        if not timestamp:
+            return False
+
+        expected_with_timestamp = hmac.new(
+            self.callback_secret.encode("utf-8"),
+            f"{timestamp}.".encode("utf-8") + raw_body,
+            hashlib.sha256,
+        ).hexdigest()
+        return hmac.compare_digest(normalized, expected_with_timestamp)
 
     def parse_event(self, payload: Dict[str, Any]) -> QQMessageEvent:
         data = payload.get("d", payload)
@@ -86,22 +138,41 @@ class QQAdapter:
 
     def _post_json(self, path: str, body: Dict[str, Any]) -> Tuple[int, str]:
         encoded_body = json.dumps(body).encode("utf-8")
-        req = urllib.request.Request(
-            url=f"{self.api_base_url}{path}",
-            method="POST",
-            data=encoded_body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bot {self.bot_account_id}.{self.bot_token}",
-            },
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout_seconds) as response:
-                payload = response.read().decode("utf-8", errors="replace")
-                return response.status, payload
-        except urllib.error.HTTPError as exc:
-            payload = exc.read().decode("utf-8", errors="replace")
-            return exc.code, payload
-        except urllib.error.URLError as exc:
-            LOGGER.error("QQ API request failed", extra={"error": str(exc), "path": path})
-            return 0, str(exc)
+        max_attempts = self.max_retries + 1
+
+        for attempt in range(1, max_attempts + 1):
+            req = urllib.request.Request(
+                url=f"{self.api_base_url}{path}",
+                method="POST",
+                data=encoded_body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bot {self.bot_account_id}.{self.bot_token}",
+                },
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout_seconds) as response:
+                    payload = response.read().decode("utf-8", errors="replace")
+                    return response.status, payload
+            except urllib.error.HTTPError as exc:
+                payload = exc.read().decode("utf-8", errors="replace")
+                if exc.code in {429, 500, 502, 503, 504} and attempt < max_attempts:
+                    self._sleep_before_retry(attempt)
+                    continue
+                return exc.code, payload
+            except urllib.error.URLError as exc:
+                if attempt < max_attempts:
+                    LOGGER.warning(
+                        "QQ API request failed, retrying",
+                        extra={"error": str(exc), "path": path, "attempt": attempt, "max_attempts": max_attempts},
+                    )
+                    self._sleep_before_retry(attempt)
+                    continue
+                LOGGER.error("QQ API request failed", extra={"error": str(exc), "path": path, "attempt": attempt})
+                return 0, str(exc)
+
+        return 0, "request_failed_after_retries"
+
+    def _sleep_before_retry(self, attempt: int) -> None:
+        backoff = self.retry_backoff_seconds * (2 ** (attempt - 1))
+        time.sleep(backoff)
