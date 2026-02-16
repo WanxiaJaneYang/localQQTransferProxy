@@ -47,7 +47,7 @@ Set runtime environment variables (usually via `.env`):
 | `QQ_APP_ID` (or `QQ_BOT_APP_ID`) | Yes | Bot app/account ID used for auth and self-message detection |
 | `QQ_APP_SECRET` | Yes | QQ app secret (validated at startup) |
 | `QQ_BOT_TOKEN` | Yes | QQ bot token used in `Authorization` header |
-| `QQ_CALLBACK_SECRET` | No | Callback verification secret placeholder |
+| `QQ_CALLBACK_SECRET` | No | HMAC secret used to verify webhook callback signatures |
 | `QQ_API_BASE_URL` | No | QQ API base URL, default `https://api.sgroup.qq.com` |
 | `CLAUDE_CMD` (or `CLAUDE_COMMAND`) | No | Command used to spawn Claude CLI, default `claude` |
 | `SESSION_TIMEOUT_SECONDS` (or `CLAUDE_SESSION_IDLE_TIMEOUT`) | No | Per-user Claude session idle timeout in seconds, default `1800` |
@@ -62,7 +62,10 @@ Set runtime environment variables (usually via `.env`):
    ```bash
    pip install -r requirements.txt
    ```
-3. Create `.env` and fill values from the Configuration section.
+3. Create `.env` from the template and then fill values from the Configuration section:
+   ```bash
+   cp .env.example .env
+   ```
 4. Run the service:
    ```bash
    python -m src.bridge.main
@@ -81,13 +84,14 @@ Implemented:
 - runtime configuration validation for required environment values;
 - QQ event normalization and response routing (channel/group/private);
 - per-user Claude subprocess sessions with idle cleanup;
-- prevention of bot self-reply loops.
+- prevention of bot self-reply loops;
+- callback signature verification with optional `QQ_CALLBACK_SECRET`;
+- timeout-aware QQ send retry strategy for temporary upstream failures;
+- automated unit tests for configuration parsing, QQ event parsing, and bridge flow behavior.
 
 Not yet implemented:
-- unit/integration tests;
-- signature verification using callback secret;
-- retry/backoff policies for QQ API failures;
-- production deployment examples and observability dashboards.
+- production deployment examples and observability dashboards;
+
 
 ## Development notes
 

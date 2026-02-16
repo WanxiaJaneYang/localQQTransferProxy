@@ -70,6 +70,10 @@ class BridgeRequestHandler(BaseHTTPRequestHandler):
         content_length = int(self.headers.get("Content-Length", "0"))
         raw = self.rfile.read(content_length)
 
+        if not self.service.qq_adapter.verify_callback_signature(raw, self.headers):
+            self.send_error(HTTPStatus.UNAUTHORIZED, "Invalid callback signature")
+            return
+
         try:
             payload = json.loads(raw.decode("utf-8"))
         except json.JSONDecodeError:
@@ -100,6 +104,7 @@ def build_service() -> BridgeService:
         bot_account_id=config.qq_app_id,
         bot_token=config.qq_bot_token,
         api_base_url=config.qq_api_base_url,
+        callback_secret=config.qq_callback_secret,
     )
     claude_adapter = ClaudeAdapter(
         command=config.claude_cmd,
